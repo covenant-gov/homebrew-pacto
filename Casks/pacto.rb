@@ -26,4 +26,11 @@ cask "pacto" do
     "~/Library/Preferences/io.pacto.plist",
     "~/Library/Saved Application State/io.pacto.savedState",
   ]
+
+  caveats <<~EOS
+    Pacto is currently distributed without Apple code signing or notarization.
+    After installation, remove the quarantine attribute to open the app:
+
+      xattr -r -d com.apple.quarantine /Applications/pacto.app
+  EOS
 end

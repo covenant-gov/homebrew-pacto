@@ -2,11 +2,7 @@
 
 Homebrew tap for [Pacto](https://github.com/covenant-gov/pacto-app), a private, censorship-resistant community organizing platform.
 
-This repo is primarily a Homebrew tap for macOS, but the install instructions below cover all platforms Pacto builds for.
-
-## macOS
-
-### Homebrew
+## Install
 
 ```bash
 brew tap covenant-gov/pacto
@@ -19,58 +15,28 @@ Or in one line:
 brew install --cask covenant-gov/pacto/pacto
 ```
 
-Pacto is currently unsigned, so Homebrew's quarantine triggers Gatekeeper's **"damaged"** warning. After installing, run:
+## Unsigned app warning
+
+Pacto is not yet signed or notarized by Apple. Homebrew applies the `com.apple.quarantine` attribute by default, so Gatekeeper shows the app as **damaged** on first launch.
+
+After installing, remove the quarantine attribute:
 
 ```bash
 xattr -r -d com.apple.quarantine /Applications/pacto.app
 ```
 
-### Manual install
+Then launch Pacto from Applications.
 
-1. Download the DMG for your Mac from the [latest release](https://github.com/covenant-gov/pacto-app/releases/latest):
-   - Apple Silicon: `pacto_0.3.0_aarch64.dmg`
-   - Intel: `pacto_0.3.0_x64.dmg`
-2. Open the DMG and drag `pacto.app` to **Applications**.
-3. Run the `xattr` command above to remove quarantine.
+The proper fix is Apple Developer ID signing + notarization. Once that is in place, `brew install --cask pacto` will open without any manual steps.
 
-## Linux
+## Manual macOS install
 
-Download the package for your distribution from the [latest release](https://github.com/covenant-gov/pacto-app/releases/latest). Examples below use v0.3.0; replace the version if a newer release is available.
+If you prefer not to use Homebrew, download the DMG for your Mac from the [latest release](https://github.com/covenant-gov/pacto-app/releases/latest):
 
-### Debian / Ubuntu (AMD64)
+- Apple Silicon: `pacto_0.3.0_aarch64.dmg`
+- Intel: `pacto_0.3.0_x64.dmg`
 
-```bash
-curl -LO https://github.com/covenant-gov/pacto-app/releases/download/v0.3.0/pacto_0.3.0_amd64.deb
-sudo dpkg -i pacto_0.3.0_amd64.deb
-```
-
-### Fedora / RHEL / openSUSE (x86_64)
-
-```bash
-curl -LO https://github.com/covenant-gov/pacto-app/releases/download/v0.3.0/pacto-0.3.0-1.x86_64.rpm
-sudo dnf install ./pacto-0.3.0-1.x86_64.rpm
-```
-
-### AppImage
-
-```bash
-curl -LO https://github.com/covenant-gov/pacto-app/releases/download/v0.3.0/pacto_0.3.0_amd64.AppImage
-chmod +x pacto_0.3.0_amd64.AppImage
-./pacto_0.3.0_amd64.AppImage
-```
-
-## Windows
-
-1. Download `pacto_0.3.0_x64_en-US.msi` from the [latest release](https://github.com/covenant-gov/pacto-app/releases/latest).
-2. Run the installer and follow the prompts.
-
-Windows Defender SmartScreen may warn that the app is unsigned. Click **More info** → **Run anyway**.
-
-## Why is the macOS app "damaged"?
-
-Pacto is not yet signed or notarized by Apple. macOS Gatekeeper rejects unsigned, quarantined apps with the "damaged" dialog. The `xattr` command removes the quarantine flag so the app can launch.
-
-The proper fix is Apple Developer ID signing + notarization. Once that is in place, the macOS install will open without any manual steps.
+Open the DMG, drag `pacto.app` to **Applications**, then run the `xattr` command above.
 
 ## Updating this tap
 

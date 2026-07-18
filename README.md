@@ -17,8 +17,12 @@ brew install --cask covenant-gov/pacto/pacto
 
 ## Notes
 
-- Pacto is currently distributed unsigned. On first launch macOS may show a warning that the developer cannot be verified. Go to **System Settings → Privacy & Security** and click **Open Anyway**.
-- `brew install --cask` strips the quarantine flag by default, so you should see the gentler "unverified developer" prompt rather than the "damaged" dialog that browser downloads trigger.
+- Pacto is currently distributed unsigned. Homebrew applies the `com.apple.quarantine` attribute by default, so Gatekeeper shows the app as **damaged** on first launch.
+- After installing, remove the quarantine attribute:
+  ```bash
+  xattr -r -d com.apple.quarantine /Applications/pacto.app
+  ```
+- The proper fix is Apple Developer ID signing + notarization; once that is in place, `brew install --cask pacto` will open without any manual steps.
 
 ## Updating this tap
 

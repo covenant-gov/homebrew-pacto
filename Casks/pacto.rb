@@ -1,11 +1,11 @@
 cask "pacto" do
   arch arm: "aarch64", intel: "x64"
 
-  version "0.3.0"
-  sha256 arm:   "5f2923f721c9c32b1d896bd0842a4f73f302049a3b6295874534bfd64a915417",
-         intel: "7e7a4e6cf216166079675758fae11eb0a2d339e245c93d717872e440e007797c"
+  version "0.5.4"
+  sha256 arm:   "f19a100a78132b7fe78c2288665fe54f042a7bc84ccd2ba14e0721a8aa93106f",
+         intel: "a73736c7cf6fef7bd0b06c105e686be65898e4ec750c9fc059d84b28855c4737"
 
-  url "https://github.com/covenant-gov/pacto-app/releases/download/v#{version}/pacto_#{version}_#{arch}.dmg"
+  url "https://github.com/covenant-gov/pacto-app/releases/download/v#{version}/Pacto_#{version}_#{arch}.dmg"
   name "Pacto"
   desc "Private, censorship-resistant community organizing platform"
   homepage "https://github.com/covenant-gov/pacto-app"

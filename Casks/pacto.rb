@@ -16,8 +16,9 @@ cask "pacto" do
   end
 
   auto_updates true
+  depends_on :macos
 
-  app "pacto.app"
+  app "Pacto.app"
 
   zap trash: [
     "~/Library/Application Support/io.pacto",
@@ -31,6 +32,6 @@ cask "pacto" do
     Pacto is currently distributed without Apple code signing or notarization.
     After installation, remove the quarantine attribute to open the app:
 
-      xattr -r -d com.apple.quarantine /Applications/pacto.app
+      xattr -r -d com.apple.quarantine /Applications/Pacto.app
   EOS
 end

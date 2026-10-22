@@ -1,0 +1,165 @@
+name: release-bump
+
+# Verifies and merges the cask bump PR that covenant-gov/pacto-app's release
+# workflow opens, so a published release reaches brew users without a human
+# merging anything. Every gate below must pass; the release job in pacto-app
+# waits on this merge and goes red if it does not happen.
+
+on:
+  pull_request:
+    branches: [main]
+    paths: ['Casks/pacto.rb']
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: release-bump
+  cancel-in-progress: false
+
+env:
+  CASK: Casks/pacto.rb
+  GH_TOKEN: ${{ github.token }}
+  HEAD_REF: ${{ github.head_ref }}
+  HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+  PR: ${{ github.event.pull_request.number }}
+  UPSTREAM: covenant-gov/pacto-app
+
+jobs:
+  verify-and-merge:
+    if: startsWith(github.head_ref, 'chore/bump-v') && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Only the cask may change
+        run: |
+          echo "only the cask may change" > "$RUNNER_TEMP/gate.txt"
+          changed="$(gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR/files" --jq '.[].filename')"
+          if [ "$changed" != "$CASK" ]; then
+            echo "This PR must change $CASK and nothing else. Changed:"
+            printf '%s\n' "$changed"
+            exit 1
+          fi
+
+      - name: Cask version is a newer published release
+        run: |
+          echo "cask version is a newer published release" > "$RUNNER_TEMP/gate.txt"
+          TAG="${HEAD_REF#chore/bump-}"
+          VERSION="$(sed -n 's/^  version "\(.*\)"$/\1/p' "$CASK")"
+          if [ -z "$VERSION" ]; then
+            echo "Could not read the version stanza from $CASK."
+            exit 1
+          fi
+          if [ "$VERSION" != "${TAG#v}" ]; then
+            echo "Cask version $VERSION does not match branch tag $TAG."
+            exit 1
+          fi
+          read -r release_tag is_draft is_prerelease <<<"$(
+            gh release view "$TAG" --repo "$UPSTREAM" \
+              --json tagName,isDraft,isPrerelease --jq '[.tagName, .isDraft, .isPrerelease] | @tsv'
+          )"
+          if [ "$release_tag" != "$TAG" ] || [ "$is_draft" != "false" ] || [ "$is_prerelease" != "false" ]; then
+            echo "$UPSTREAM $TAG is not a published, non-draft, non-prerelease release (tag=$release_tag draft=$is_draft prerelease=$is_prerelease)."
+            exit 1
+          fi
+          git fetch --depth=1 origin "$GITHUB_BASE_REF"
+          base_version="$(git show "FETCH_HEAD:$CASK" | sed -n 's/^  version "\(.*\)"$/\1/p')"
+          if [ "$VERSION" = "$base_version" ] ||
+             [ "$(printf '%s\n%s\n' "$VERSION" "$base_version" | sort -V | head -n 1)" != "$base_version" ]; then
+            echo "Cask version $VERSION is not newer than $GITHUB_BASE_REF's $base_version; refusing to downgrade the tap."
+            exit 1
+          fi
+          echo "TAG=$TAG" >> "$GITHUB_ENV"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+
+      - name: Checksums match the DMGs the cask points at
+        run: |
+          echo "checksums match the DMGs the cask points at" > "$RUNNER_TEMP/gate.txt"
+          url_template="$(sed -n 's/^  url "\(.*\)"$/\1/p' "$CASK")"
+          arm_slug="$(sed -n 's/^  arch arm: "\([^"]*\)".*/\1/p' "$CASK")"
+          intel_slug="$(sed -n 's/^  arch .*intel: "\([^"]*\)".*/\1/p' "$CASK")"
+          arm_sha="$(sed -n 's/.*arm:[[:space:]]*"\([0-9a-f]\{64\}\)".*/\1/p' "$CASK" | head -n 1)"
+          intel_sha="$(sed -n 's/.*intel:[[:space:]]*"\([0-9a-f]\{64\}\)".*/\1/p' "$CASK" | head -n 1)"
+          for value in "$url_template" "$arm_slug" "$intel_slug" "$arm_sha" "$intel_sha"; do
+            if [ -z "$value" ]; then
+              echo "Could not parse the url, arch or sha256 stanzas from $CASK."
+              exit 1
+            fi
+          done
+          check() {
+            local slug="$1" expected="$2" url
+            url="${url_template//\#\{version\}/$VERSION}"
+            url="${url//\#\{arch\}/$slug}"
+            echo "Downloading $url"
+            curl --fail --silent --show-error --location --retry 3 -o "$RUNNER_TEMP/$slug.dmg" "$url"
+            local actual
+            actual="$(shasum -a 256 "$RUNNER_TEMP/$slug.dmg" | cut -d' ' -f1)"
+            rm -f "$RUNNER_TEMP/$slug.dmg"
+            if [ "$actual" != "$expected" ]; then
+              echo "sha256 mismatch for $slug: cask says $expected, download is $actual."
+              exit 1
+            fi
+            echo "$slug sha256 verified."
+          }
+          check "$arm_slug" "$arm_sha"
+          check "$intel_slug" "$intel_sha"
+
+      - name: Tap the checkout for brew
+        run: |
+          tap_dir="$(brew --repository)/Library/Taps/${GITHUB_REPOSITORY%%/*}/${GITHUB_REPOSITORY#*/}"
+          mkdir -p "$(dirname "$tap_dir")"
+          rm -rf "$tap_dir"
+          ln -s "$GITHUB_WORKSPACE" "$tap_dir"
+          echo "CASK_TOKEN=${GITHUB_REPOSITORY%%/*}/pacto/pacto" >> "$GITHUB_ENV"
+
+      - name: brew style and audit
+        run: |
+          echo "brew style and audit" > "$RUNNER_TEMP/gate.txt"
+          brew style --cask "$CASK_TOKEN"
+          brew audit --cask --strict --online "$CASK_TOKEN"
+
+      - name: Install and uninstall the cask
+        run: |
+          echo "install and uninstall the cask" > "$RUNNER_TEMP/gate.txt"
+          app="$(sed -n 's/^  app "\(.*\)"$/\1/p' "$CASK")"
+          brew install --cask "$CASK_TOKEN"
+          if [ ! -d "/Applications/$app" ]; then
+            echo "/Applications/$app is missing after install."
+            exit 1
+          fi
+          brew uninstall --cask "$CASK_TOKEN"
+
+      - name: Merge the verified commit
+        run: |
+          echo "merge the verified commit" > "$RUNNER_TEMP/gate.txt"
+          gh pr merge "$PR" --repo "$GITHUB_REPOSITORY" --squash --delete-branch \
+            --match-head-commit "$HEAD_SHA"
+
+      - name: Close superseded bump PRs
+        run: |
+          gh pr list --repo "$GITHUB_REPOSITORY" --state open --limit 100 \
+            --json number,headRefName \
+            --jq '.[] | select(.headRefName | startswith("chore/bump-v")) | [.number, .headRefName] | @tsv' \
+            | while IFS=$'\t' read -r number head_ref; do
+                other_tag="${head_ref#chore/bump-}"
+                if [ "$other_tag" = "$TAG" ] || [ "$(printf '%s\n%s\n' "$other_tag" "$TAG" | sort -V | head -n 1)" != "$other_tag" ]; then
+                  continue
+                fi
+                echo "Closing superseded #$number ($head_ref)."
+                gh pr close "$number" --repo "$GITHUB_REPOSITORY" --delete-branch \
+                  --comment "Superseded by $TAG, which is now on main."
+              done
+
+      - name: Report the failing gate
+        if: failure()
+        run: |
+          gate="$(cat "$RUNNER_TEMP/gate.txt" 2>/dev/null || echo 'setup')"
+          gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body "$(
+            printf '%s\n\n%s\n' \
+              "Cask verification failed at the gate: **${gate}**. This PR stays open and unmerged." \
+              "Log: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          )"

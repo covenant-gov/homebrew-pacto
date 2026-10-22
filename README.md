@@ -22,7 +22,7 @@ Pacto is not yet signed or notarized by Apple. Homebrew applies the `com.apple.q
 After installing, remove the quarantine attribute:
 
 ```bash
-xattr -r -d com.apple.quarantine /Applications/pacto.app
+xattr -r -d com.apple.quarantine /Applications/Pacto.app
 ```
 
 Then launch Pacto from Applications.
@@ -33,23 +33,29 @@ The proper fix is Apple Developer ID signing + notarization. Once that is in pla
 
 If you prefer not to use Homebrew, download the DMG for your Mac from the [latest release](https://github.com/covenant-gov/pacto-app/releases/latest):
 
-- Apple Silicon: `pacto_0.3.0_aarch64.dmg`
-- Intel: `pacto_0.3.0_x64.dmg`
+- Apple Silicon: `Pacto_<version>_aarch64.dmg`
+- Intel: `Pacto_<version>_x64.dmg`
 
-Open the DMG, drag `pacto.app` to **Applications**, then run the `xattr` command above.
+Open the DMG, drag `Pacto.app` to **Applications**, then run the `xattr` command above.
 
-## Updating this tap
+## How this tap is updated
 
-After each Pacto release, update `Casks/pacto.rb`:
+Nobody edits `Casks/pacto.rb` by hand. Publishing a release in
+[pacto-app](https://github.com/covenant-gov/pacto-app) opens a
+`chore/bump-v<version>` PR here with the new version and the sha256 of the two
+published DMGs.
 
-1. Change `version` to the new tag (without the leading `v`).
-2. Replace the two `sha256` values with the checksums of the release DMGs:
-   ```bash
-   shasum -a 256 pacto_0.3.0_aarch64.dmg
-   shasum -a 256 pacto_0.3.0_x64.dmg
-   ```
-3. Verify the cask:
-   ```bash
-   brew audit --cask --strict Casks/pacto.rb
-   brew install --cask Casks/pacto.rb
-   ```
+`.github/workflows/release-bump.yaml` then verifies that PR on a macOS runner
+and merges it:
+
+- only `Casks/pacto.rb` may change;
+- the cask version equals the branch's tag, is newer than `main`, and that tag
+  is a published, non-draft, non-prerelease release in pacto-app;
+- both DMGs are downloaded from the cask's own URLs and their sha256 compared
+  against the cask;
+- `brew style` and `brew audit --cask --strict --online` pass;
+- the cask installs and its app bundle lands in `/Applications`.
+
+It squash-merges pinned to the verified head commit, deletes the branch, and
+closes any open bump PR for an older version. A failing gate leaves the PR open
+with a comment naming the gate, and the release run in pacto-app goes red.

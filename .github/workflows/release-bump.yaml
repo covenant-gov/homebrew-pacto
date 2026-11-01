@@ -116,6 +116,11 @@ jobs:
           ln -s "$GITHUB_WORKSPACE" "$tap_dir"
           echo "CASK_TOKEN=${GITHUB_REPOSITORY%%/*}/pacto/pacto" >> "$GITHUB_ENV"
 
+      - name: Trust the release cask
+        run: |
+          echo "trust the release cask" > "$RUNNER_TEMP/gate.txt"
+          brew trust --cask "$CASK_TOKEN"
+
       - name: brew style and audit
         run: |
           echo "brew style and audit" > "$RUNNER_TEMP/gate.txt"

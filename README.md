@@ -6,6 +6,7 @@ Homebrew tap for [Pacto](https://github.com/covenant-gov/pacto-app), a private, 
 
 ```bash
 brew tap covenant-gov/pacto
+brew trust --cask covenant-gov/pacto/pacto
 brew install --cask pacto
 ```
 
@@ -53,9 +54,17 @@ and merges it:
   is a published, non-draft, non-prerelease release in pacto-app;
 - both DMGs are downloaded from the cask's own URLs and their sha256 compared
   against the cask;
+- the runner explicitly trusts only `covenant-gov/pacto/pacto` after checksum
+  verification, as required by [Homebrew tap trust](https://docs.brew.sh/Tap-Trust);
 - `brew style` and `brew audit --cask --strict --online` pass;
 - the cask installs and its app bundle lands in `/Applications`.
 
 It squash-merges pinned to the verified head commit, deletes the branch, and
 closes any open bump PR for an older version. A failing gate leaves the PR open
 with a comment naming the gate, and the release run in pacto-app goes red.
+
+## Workflow regression check
+
+Run `node --test test/release-bump.test.mjs`. The test executes the workflow's
+trust and audit scripts against a stub Homebrew command; it does not change
+trust or install software on the developer's machine.

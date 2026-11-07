@@ -4,15 +4,21 @@ name: release-bump
 # workflow opens, so a published release reaches brew users without a human
 # merging anything. Every gate below must pass; the release job in pacto-app
 # waits on this merge and goes red if it does not happen.
+#
+# Credential boundary: untrusted validation (PR checkout + brew install of the
+# PR-controlled cask) runs in `verify` with no contents:write. Merge/close run
+# in a separate `merge` job that never checks out PR code, never installs the
+# cask, and revalidates exact PR/commit identity before using write privileges.
+# GitHub Actions permissions are workflow- or job-scoped only (not per-step).
 
 on:
   pull_request:
     branches: [main]
     paths: ['Casks/pacto.rb']
 
+# Default least privilege. Jobs that need more declare it explicitly below.
 permissions:
-  contents: write
-  pull-requests: write
+  contents: read
 
 concurrency:
   group: release-bump
@@ -20,22 +26,29 @@ concurrency:
 
 env:
   CASK: Casks/pacto.rb
-  GH_TOKEN: ${{ github.token }}
   HEAD_REF: ${{ github.head_ref }}
   HEAD_SHA: ${{ github.event.pull_request.head.sha }}
   PR: ${{ github.event.pull_request.number }}
   UPSTREAM: covenant-gov/pacto-app
 
 jobs:
-  verify-and-merge:
+  verify:
     if: startsWith(github.head_ref, 'chore/bump-v') && github.event.pull_request.head.repo.full_name == github.repository
     runs-on: macos-latest
+    # Read tree + comment on failure. No merge-capable write token — brew
+    # install of PR-controlled cask must not share credentials that can merge.
+    permissions:
+      contents: read
+      pull-requests: write
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
 
       - name: Only the cask may change
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           echo "only the cask may change" > "$RUNNER_TEMP/gate.txt"
           changed="$(gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR/files" --jq '.[].filename')"
@@ -46,6 +59,8 @@ jobs:
           fi
 
       - name: Cask version is a newer published release
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           echo "cask version is a newer published release" > "$RUNNER_TEMP/gate.txt"
           TAG="${HEAD_REF#chore/bump-}"
@@ -138,13 +153,87 @@ jobs:
           fi
           brew uninstall --cask "$CASK_TOKEN"
 
-      - name: Merge the verified commit
+      - name: Report the failing gate
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gate="$(cat "$RUNNER_TEMP/gate.txt" 2>/dev/null || echo 'setup')"
+          gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body "$(
+            printf '%s\n\n%s\n' \
+              "Cask verification failed at the gate: **${gate}**. This PR stays open and unmerged." \
+              "Log: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          )"
+
+  merge:
+    needs: verify
+    if: startsWith(github.head_ref, 'chore/bump-v') && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    # Write privileges live only here. No PR checkout, no brew, no artifacts
+    # from verify — identity is re-read from the API + workflow event context.
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Revalidate identity and merge the verified commit
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           echo "merge the verified commit" > "$RUNNER_TEMP/gate.txt"
+          # Do not trust job outputs or artifacts from verify for merge identity.
+          TAG="${HEAD_REF#chore/bump-}"
+          echo "TAG=$TAG" >> "$GITHUB_ENV"
+          read -r head_sha head_repo head_ref pr_state pr_merged <<<"$(
+            gh api "repos/$GITHUB_REPOSITORY/pulls/$PR" \
+              --jq '[.head.sha, .head.repo.full_name, .head.ref, .state, .merged] | @tsv'
+          )"
+          if [ "$pr_merged" = "true" ]; then
+            echo "PR #$PR is already merged; nothing to do."
+            exit 0
+          fi
+          if [ "$pr_state" != "open" ]; then
+            echo "PR #$PR is $pr_state; refusing to merge."
+            exit 1
+          fi
+          if [ "$head_sha" != "$HEAD_SHA" ]; then
+            echo "PR head moved ($head_sha != $HEAD_SHA); refusing to merge a different commit than verify checked."
+            exit 1
+          fi
+          if [ "$head_repo" != "$GITHUB_REPOSITORY" ]; then
+            echo "PR head repo $head_repo is not $GITHUB_REPOSITORY; refusing fork merge."
+            exit 1
+          fi
+          case "$head_ref" in
+            chore/bump-v*) ;;
+            *)
+              echo "PR head ref $head_ref is not a chore/bump-v* branch; refusing to merge."
+              exit 1
+              ;;
+          esac
+          if [ "$head_ref" != "$HEAD_REF" ]; then
+            echo "PR head ref changed ($head_ref != $HEAD_REF); refusing to merge."
+            exit 1
+          fi
+          changed="$(gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR/files" --jq '.[].filename')"
+          if [ "$changed" != "$CASK" ]; then
+            echo "PR no longer changes only $CASK. Changed:"
+            printf '%s\n' "$changed"
+            exit 1
+          fi
+          read -r release_tag is_draft is_prerelease <<<"$(
+            gh release view "$TAG" --repo "$UPSTREAM" \
+              --json tagName,isDraft,isPrerelease --jq '[.tagName, .isDraft, .isPrerelease] | @tsv'
+          )"
+          if [ "$release_tag" != "$TAG" ] || [ "$is_draft" != "false" ] || [ "$is_prerelease" != "false" ]; then
+            echo "$UPSTREAM $TAG is not a published, non-draft, non-prerelease release (tag=$release_tag draft=$is_draft prerelease=$is_prerelease)."
+            exit 1
+          fi
           gh pr merge "$PR" --repo "$GITHUB_REPOSITORY" --squash --delete-branch \
             --match-head-commit "$HEAD_SHA"
 
       - name: Close superseded bump PRs
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           gh pr list --repo "$GITHUB_REPOSITORY" --state open --limit 100 \
             --json number,headRefName \
@@ -158,13 +247,3 @@ jobs:
                 gh pr close "$number" --repo "$GITHUB_REPOSITORY" --delete-branch \
                   --comment "Superseded by $TAG, which is now on main."
               done
-
-      - name: Report the failing gate
-        if: failure()
-        run: |
-          gate="$(cat "$RUNNER_TEMP/gate.txt" 2>/dev/null || echo 'setup')"
-          gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body "$(
-            printf '%s\n\n%s\n' \
-              "Cask verification failed at the gate: **${gate}**. This PR stays open and unmerged." \
-              "Log: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
-          )"

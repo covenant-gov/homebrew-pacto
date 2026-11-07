@@ -46,8 +46,11 @@ Nobody edits `Casks/pacto.rb` by hand. Publishing a release in
 `chore/bump-v<version>` PR here with the new version and the sha256 of the two
 published DMGs.
 
-`.github/workflows/release-bump.yaml` then verifies that PR on a macOS runner
-and merges it:
+`.github/workflows/release-bump.yaml` then verifies that PR and merges it in
+two jobs so brew validation never shares merge credentials:
+
+**`verify` (macOS, read + comment only)** checks out the PR head with
+`persist-credentials: false` and runs every gate:
 
 - only `Casks/pacto.rb` may change;
 - the cask version equals the branch's tag, is newer than `main`, and that tag
@@ -59,12 +62,17 @@ and merges it:
 - `brew style` and `brew audit --cask --strict --online` pass;
 - the cask installs and its app bundle lands in `/Applications`.
 
-It squash-merges pinned to the verified head commit, deletes the branch, and
-closes any open bump PR for an older version. A failing gate leaves the PR open
-with a comment naming the gate, and the release run in pacto-app goes red.
+**`merge` (Linux, contents + pull-requests write)** never checks out PR code and
+never runs brew. It revalidates the same-repo `chore/bump-v*` identity, exact
+head SHA, path filter, and published release, then squash-merges with
+`--match-head-commit`, deletes the branch, and closes superseded bump PRs.
+
+A failing verify gate leaves the PR open with a comment naming the gate, and the
+release run in pacto-app goes red.
 
 ## Workflow regression check
 
-Run `node --test test/release-bump.test.mjs`. The test executes the workflow's
-trust and audit scripts against a stub Homebrew command; it does not change
-trust or install software on the developer's machine.
+Run `node --test test/release-bump.test.mjs`. The tests exercise trust/audit and
+install scripts against stub `brew`/`gh` commands and assert credential-boundary
+policy in the workflow YAML; they do not change trust or install software on the
+developer's machine.
